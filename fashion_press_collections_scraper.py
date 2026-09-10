@@ -108,6 +108,15 @@ OUTPUT_COLUMNS = [
     "ブランド概要",
 ]
 
+MANUAL_HISTORY_CSV = OUTPUT_DIR / "history_manual.csv"
+MANUAL_HISTORY_COLUMNS = [
+    "brand_page_url",
+    "ブランド",
+    "ブランド（カタカナ）",
+    "ブランドURL",
+    "ブランド概要",
+]
+
 
 logging.basicConfig(
     filename=str(LOG_FILE),
@@ -154,6 +163,15 @@ def canonical_url(value: str) -> str:
         return value.rstrip("/")
 
     return value
+
+
+def create_manual_history_template():
+    if MANUAL_HISTORY_CSV.exists():
+        return
+
+    with MANUAL_HISTORY_CSV.open("w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=MANUAL_HISTORY_COLUMNS)
+        writer.writeheader()
 
 
 def build_verified_ssl_context():
@@ -752,6 +770,65 @@ def import_previous_csvs_to_db() -> int:
     return imported
 
 
+def get_row_value(row: dict, keys: list[str]) -> str:
+    for key in keys:
+        value = clean_text(row.get(key, ""))
+
+        if value:
+            return value
+
+    return ""
+
+
+def import_manual_history_csv_to_db() -> int:
+    init_db()
+    create_manual_history_template()
+
+    if not MANUAL_HISTORY_CSV.exists():
+        return 0
+
+    imported = 0
+
+    try:
+        with MANUAL_HISTORY_CSV.open("r", newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+
+            for row in reader:
+                brand_page_url = canonical_url(
+                    get_row_value(row, ["brand_page_url", "ブランド詳細URL", "Fashion PressブランドURL"])
+                )
+                brand = canonical_text(get_row_value(row, ["ブランド", "brand"]))
+                brand_kana = canonical_text(get_row_value(row, ["ブランド（カタカナ）", "brand_kana"]))
+                official_url = canonical_url(get_row_value(row, ["ブランドURL", "official_url"]))
+
+                if not any([brand_page_url, brand, brand_kana, official_url]):
+                    continue
+
+                if is_acquired_brand(
+                    brand_page_url=brand_page_url,
+                    brand=brand,
+                    brand_kana=brand_kana,
+                    official_url=official_url,
+                ):
+                    continue
+
+                save_acquired_brand(
+                    {
+                        "ブランド": brand,
+                        "ブランド（カタカナ）": brand_kana,
+                        "ブランドURL": official_url,
+                        "ブランド概要": clean_text(row.get("ブランド概要", "")),
+                    },
+                    brand_page_url,
+                )
+                imported += 1
+
+    except Exception as e:
+        log(f"手動履歴CSVの取り込みをスキップしました: {MANUAL_HISTORY_CSV} / {e}")
+
+    return imported
+
+
 def save_csv(rows: list[dict], output_csv: Path):
     with output_csv.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS, extrasaction="ignore")
@@ -769,6 +846,7 @@ class ScrapeConfig:
 def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
     init_db()
     imported_history_count = import_previous_csvs_to_db()
+    imported_manual_history_count = import_manual_history_csv_to_db()
     rows = []
     brand_candidates = {}
     output_csv = OUTPUT_DIR / f"fashion_press_tokyo_other_brand_overviews_{timestamp_str()}.csv"
@@ -785,6 +863,7 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
     log(f"選択場所: {location_names}")
     log("取得範囲: 各シーズンの選択場所一覧1ページ目に表示されているブランドのみ")
     log(f"過去CSVから履歴DBへ取り込んだ件数: {imported_history_count}")
+    log(f"手動履歴CSVから履歴DBへ取り込んだ件数: {imported_manual_history_count}")
     log("========================================")
 
     for season_label, season_slug in config.seasons:
@@ -876,6 +955,7 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
         "一覧取得ページ数": fetched_pages,
         "ブランド詳細取得ページ数": fetched_brand_pages,
         "履歴スキップ件数": skipped_by_history_count,
+        "手動履歴CSV取り込み件数": imported_manual_history_count,
         "一覧内重複スキップ件数": duplicate_candidate_count,
         "CSV出力件数": len(rows),
         "CSV保存済み": csv_saved,
@@ -1139,6 +1219,7 @@ class FashionPressCollectionsApp:
             ("停止しました。\n\n" if stopped else "処理が完了しました。\n\n")
             + f"一覧取得ページ数: {result.get('一覧取得ページ数', 0)}\n"
             + f"ブランド詳細取得ページ数: {result.get('ブランド詳細取得ページ数', 0)}\n"
+            + f"手動履歴CSV取り込み件数: {result.get('手動履歴CSV取り込み件数', 0)}\n"
             + f"履歴スキップ件数: {result.get('履歴スキップ件数', 0)}\n"
             + f"CSV出力件数: {result.get('CSV出力件数', 0)}\n"
             + f"CSV保存: {'あり' if result.get('CSV保存済み') else 'なし'}\n"

@@ -52,14 +52,31 @@ Macの場合、Windowsの `.bat` の代わりに `.command` ファイルを使�
 
 取得済みブランドは `fashion_press_history.db` に保存されます。
 
-次回以降は以下の情報を完全一致で確認し、履歴にあるブランドは取得しません。
+手動で履歴を追加したい場合は、DBを直接編集せず `output/history_manual.csv` に追記してください。
+
+初回起動時に以下のテンプレートCSVが自動作成されます。
+
+```text
+output/history_manual.csv
+```
+
+手動追加で一番おすすめの列は `brand_page_url` です。
+
+例:
+
+```csv
+brand_page_url,ブランド,ブランド（カタカナ）,ブランドURL,ブランド概要
+https://www.fashion-press.net/brands/3062,,,,
+```
+
+次回以降は以下の情報を完全一致で確認し、履歴にあるブランドは取得しません。最優先は `brand_page_url` です。
 
 - Fashion Press のブランド詳細ページURL
 - ブランド名
 - ブランド（カタカナ）
 - 公式サイトURL
 
-過去にこのツールで出力したCSVが `output/` にある場合は、起動時に履歴DBへ自動取り込みします。
+過去にこのツールで出力したCSVが `output/` にある場合も、起動時に履歴DBへ自動取り込みします。
 
 ## 出力先
 
