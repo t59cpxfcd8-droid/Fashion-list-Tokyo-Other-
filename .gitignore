@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.log
 *.db
+email_settings.json
 
 # Generated CSV output
 output/
