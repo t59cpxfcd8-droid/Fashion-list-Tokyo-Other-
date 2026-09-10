@@ -140,8 +140,9 @@ logging.basicConfig(
 )
 
 
-def log(message: str):
-    print(message)
+def log(message: str, console: bool = True):
+    if console:
+        print(message)
     logging.info(message)
 
 
@@ -299,7 +300,8 @@ def fetch_html(url: str) -> str:
                 if context_label == "SSL検証あり" and is_ssl_certificate_error(e):
                     log(
                         "SSL証明書の検証に失敗しました。"
-                        "ローカル環境の証明書ストアが原因の可能性があります。"
+                        "ローカル環境の証明書ストアが原因の可能性があります。",
+                        console=False,
                     )
                     break
 
@@ -307,7 +309,7 @@ def fetch_html(url: str) -> str:
                 time.sleep(WAIT_BETWEEN_BRAND_PAGES * attempt)
 
         if context_label == "SSL検証あり" and ALLOW_UNVERIFIED_SSL_FALLBACK:
-            log("SSL検証なしのフォールバックで再取得します。")
+            log("SSL検証なしのフォールバックで再取得します。", console=False)
 
     raise RuntimeError(f"ページを取得できませんでした: {url} / {last_error}")
 
