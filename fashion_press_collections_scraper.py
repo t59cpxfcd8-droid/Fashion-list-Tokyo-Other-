@@ -6,11 +6,12 @@ Fashion Press コレクション一覧スクレイピングツール
 
 仕様:
     - GUIでシーズンを複数選択
-    - 場所は東京で固定
-    - 各シーズンの東京コレクション一覧1ページ目に表示されているブランドだけ取得
+    - 場所は東京・その他で固定
+    - 各シーズンの東京・その他コレクション一覧1ページ目に表示されているブランドだけ取得
     - ブランド詳細ページから公式サイトURLとブランド概要を取得
     - CSVに保存
     - 次ページ巡回はしない
+    - SQLite履歴DBで取得済みブランドはスキップ
 
 実行:
     python3 fashion_press_collections_scraper.py
@@ -19,6 +20,7 @@ Fashion Press コレクション一覧スクレイピングツール
 import csv
 import logging
 import re
+import sqlite3
 import ssl
 import tempfile
 import threading
@@ -38,11 +40,15 @@ from tkinter import ttk
 
 BASE_URL = "https://www.fashion-press.net"
 COLLECTIONS_URL = f"{BASE_URL}/collections/"
-TOKYO_SLUG = "tokyo"
+LOCATION_OPTIONS = [
+    ("東京", "tokyo"),
+    ("その他", "other"),
+]
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "output"
 LOG_FILE = SCRIPT_DIR / "fashion_press_collections.log"
+DB_PATH = SCRIPT_DIR / "fashion_press_history.db"
 
 try:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -128,13 +134,26 @@ def timestamp_str() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-def build_season_tokyo_url(season_slug: str, page_number: int = 1) -> str:
-    base = f"{BASE_URL}/collections/search/{season_slug}/{TOKYO_SLUG}"
+def build_season_location_url(season_slug: str, location_slug: str, page_number: int = 1) -> str:
+    base = f"{BASE_URL}/collections/search/{season_slug}/{location_slug}"
 
     if page_number <= 1:
         return base
 
     return f"{base}?page={page_number}"
+
+
+def canonical_text(value: str) -> str:
+    return clean_text(value)
+
+
+def canonical_url(value: str) -> str:
+    value = clean_text(value)
+
+    if value.endswith("/"):
+        return value.rstrip("/")
+
+    return value
 
 
 def build_verified_ssl_context():
@@ -243,10 +262,11 @@ class SeasonParser(HTMLParser):
 
 
 class CollectionListParser(HTMLParser):
-    def __init__(self, source_url: str, season_label: str):
+    def __init__(self, source_url: str, season_label: str, location_label: str):
         super().__init__(convert_charrefs=True)
         self.source_url = source_url
         self.season_label = season_label
+        self.location_label = location_label
         self.items = []
         self.has_next_page = False
 
@@ -270,7 +290,7 @@ class CollectionListParser(HTMLParser):
             self.article_depth = 1
             self.current = {
                 "シーズン": self.season_label,
-                "場所": "東京",
+                "場所": self.location_label,
                 "ブランド": "",
                 "ブランドURL": "",
                 "コレクション名": "",
@@ -525,8 +545,13 @@ def fetch_seasons_from_site() -> list[tuple[str, str]]:
     return parser.seasons or DEFAULT_SEASONS
 
 
-def parse_collections(html: str, source_url: str, season_label: str) -> tuple[list[dict], bool]:
-    parser = CollectionListParser(source_url, season_label)
+def parse_collections(
+    html: str,
+    source_url: str,
+    season_label: str,
+    location_label: str,
+) -> tuple[list[dict], bool]:
+    parser = CollectionListParser(source_url, season_label, location_label)
     parser.feed(html)
     return parser.items, parser.has_next_page
 
@@ -568,6 +593,165 @@ def infer_latin_brand_name_from_title(html: str) -> str:
     return ""
 
 
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS acquired_brands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        brand_page_url TEXT,
+        brand TEXT,
+        brand_kana TEXT,
+        official_url TEXT,
+        overview TEXT,
+        first_acquired_at TEXT,
+        last_acquired_at TEXT
+    )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_acquired_brand_page_url ON acquired_brands(brand_page_url)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_acquired_brand ON acquired_brands(brand)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_acquired_brand_kana ON acquired_brands(brand_kana)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_acquired_official_url ON acquired_brands(official_url)")
+    conn.commit()
+    conn.close()
+
+
+def now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def is_acquired_brand(
+    brand_page_url: str = "",
+    brand: str = "",
+    brand_kana: str = "",
+    official_url: str = "",
+) -> bool:
+    checks = [
+        ("brand_page_url", canonical_url(brand_page_url)),
+        ("brand", canonical_text(brand)),
+        ("brand_kana", canonical_text(brand_kana)),
+        ("official_url", canonical_url(official_url)),
+    ]
+    checks = [(column, value) for column, value in checks if value]
+
+    if not checks:
+        return False
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+
+    for column, value in checks:
+        cur.execute(f"SELECT 1 FROM acquired_brands WHERE {column} = ? LIMIT 1", (value,))
+
+        if cur.fetchone():
+            conn.close()
+            return True
+
+    conn.close()
+    return False
+
+
+def save_acquired_brand(row: dict, brand_page_url: str):
+    now = now_str()
+    values = {
+        "brand_page_url": canonical_url(brand_page_url),
+        "brand": canonical_text(row.get("ブランド", "")),
+        "brand_kana": canonical_text(row.get("ブランド（カタカナ）", "")),
+        "official_url": canonical_url(row.get("ブランドURL", "")),
+        "overview": clean_text(row.get("ブランド概要", "")),
+    }
+
+    if is_acquired_brand(
+        values["brand_page_url"],
+        values["brand"],
+        values["brand_kana"],
+        values["official_url"],
+    ):
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        update_conditions = []
+        params = []
+
+        for column in ["brand_page_url", "brand", "brand_kana", "official_url"]:
+            if values[column]:
+                update_conditions.append(f"{column} = ?")
+                params.append(values[column])
+
+        if update_conditions:
+            cur.execute(
+                f"UPDATE acquired_brands SET last_acquired_at = ? WHERE {' OR '.join(update_conditions)}",
+                [now] + params,
+            )
+            conn.commit()
+        conn.close()
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO acquired_brands (
+            brand_page_url,
+            brand,
+            brand_kana,
+            official_url,
+            overview,
+            first_acquired_at,
+            last_acquired_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            values["brand_page_url"],
+            values["brand"],
+            values["brand_kana"],
+            values["official_url"],
+            values["overview"],
+            now,
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def import_previous_csvs_to_db() -> int:
+    init_db()
+    imported = 0
+    candidate_dirs = [
+        OUTPUT_DIR,
+        SCRIPT_DIR / "outputs" / "output",
+    ]
+
+    for candidate_dir in candidate_dirs:
+        if not candidate_dir.exists():
+            continue
+
+        for csv_file in candidate_dir.glob("fashion_press*_brand_overviews_*.csv"):
+            try:
+                with csv_file.open("r", newline="", encoding="utf-8-sig") as f:
+                    reader = csv.DictReader(f)
+
+                    for row in reader:
+                        brand = canonical_text(row.get("ブランド", ""))
+                        brand_kana = canonical_text(row.get("ブランド（カタカナ）", ""))
+                        official_url = canonical_url(row.get("ブランドURL", ""))
+
+                        if not any([brand, brand_kana, official_url]):
+                            continue
+
+                        if is_acquired_brand(brand=brand, brand_kana=brand_kana, official_url=official_url):
+                            continue
+
+                        save_acquired_brand(row, "")
+                        imported += 1
+
+            except Exception as e:
+                log(f"過去CSVの履歴取り込みをスキップしました: {csv_file} / {e}")
+
+    return imported
+
+
 def save_csv(rows: list[dict], output_csv: Path):
     with output_csv.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS, extrasaction="ignore")
@@ -582,49 +766,64 @@ class ScrapeConfig:
 
 
 def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
+    init_db()
+    imported_history_count = import_previous_csvs_to_db()
     rows = []
     brand_candidates = {}
-    output_csv = OUTPUT_DIR / f"fashion_press_tokyo_brand_overviews_{timestamp_str()}.csv"
+    output_csv = OUTPUT_DIR / f"fashion_press_tokyo_other_brand_overviews_{timestamp_str()}.csv"
     stopped = False
     fetched_pages = 0
     fetched_brand_pages = 0
+    skipped_by_history_count = 0
+    duplicate_candidate_count = 0
 
     log("========================================")
-    log("Fashion Press 東京コレクション ブランド概要取得開始")
+    log("Fashion Press 東京・その他コレクション ブランド概要取得開始")
     log(f"選択シーズン数: {len(config.seasons)}")
-    log("取得範囲: 各シーズンの東京一覧1ページ目に表示されているブランドのみ")
-    log("場所: 東京固定")
+    log("取得範囲: 各シーズンの東京・その他一覧1ページ目に表示されているブランドのみ")
+    log("場所: 東京・その他固定")
+    log(f"過去CSVから履歴DBへ取り込んだ件数: {imported_history_count}")
     log("========================================")
 
     for season_label, season_slug in config.seasons:
-        if stop_event is not None and stop_event.is_set():
-            stopped = True
-            log("停止要求を受け付けたため処理を終了します。")
-            break
+        for location_label, location_slug in LOCATION_OPTIONS:
+            if stop_event is not None and stop_event.is_set():
+                stopped = True
+                log("停止要求を受け付けたため処理を終了します。")
+                break
 
-        url = build_season_tokyo_url(season_slug, 1)
-        log(f"一覧取得: {season_label} / 1ページ目のみ / {url}")
-        html = fetch_html(url)
-        fetched_pages += 1
+            url = build_season_location_url(season_slug, location_slug, 1)
+            log(f"一覧取得: {season_label} / {location_label} / 1ページ目のみ / {url}")
+            html = fetch_html(url)
+            fetched_pages += 1
 
-        items, _has_next_page = parse_collections(html, url, season_label)
-        log(f"このページに表示されているブランド候補: {len(items)}件")
+            items, _has_next_page = parse_collections(html, url, season_label, location_label)
+            log(f"このページに表示されているブランド候補: {len(items)}件")
 
-        for item in items:
-            collection_brand_url = item.get("ブランドURL", "")
+            for item in items:
+                collection_brand_url = item.get("ブランドURL", "")
 
-            if not collection_brand_url:
-                continue
+                if not collection_brand_url:
+                    continue
 
-            brand_page_url = collection_brand_url_to_brand_page_url(collection_brand_url)
+                brand_page_url = collection_brand_url_to_brand_page_url(collection_brand_url)
+                fallback_kana_name = item.get("ブランド", "")
 
-            if brand_page_url not in brand_candidates:
-                brand_candidates[brand_page_url] = item.get("ブランド", "")
+                if is_acquired_brand(brand_page_url=brand_page_url, brand_kana=fallback_kana_name):
+                    skipped_by_history_count += 1
+                    log(f"履歴スキップ: {fallback_kana_name} / {brand_page_url}")
+                    continue
+
+                if brand_page_url in brand_candidates:
+                    duplicate_candidate_count += 1
+                    continue
+
+                brand_candidates[brand_page_url] = fallback_kana_name
+
+            time.sleep(WAIT_BETWEEN_LIST_PAGES)
 
         if stopped:
             break
-
-        time.sleep(WAIT_BETWEEN_LIST_PAGES)
 
     if not stopped:
         log(f"ブランド詳細取得対象: {len(brand_candidates)}件")
@@ -640,8 +839,25 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
             fetched_brand_pages += 1
             brand_row = parse_brand_detail(html, fallback_kana_name, brand_page_url)
 
+            if is_acquired_brand(
+                brand_page_url=brand_page_url,
+                brand=brand_row.get("ブランド", ""),
+                brand_kana=brand_row.get("ブランド（カタカナ）", ""),
+                official_url=brand_row.get("ブランドURL", ""),
+            ):
+                skipped_by_history_count += 1
+                log(
+                    "履歴スキップ: "
+                    f"{brand_row.get('ブランド', '')} / "
+                    f"{brand_row.get('ブランド（カタカナ）', '')} / "
+                    f"{brand_page_url}"
+                )
+                time.sleep(WAIT_BETWEEN_BRAND_PAGES)
+                continue
+
             if brand_row["ブランド（カタカナ）"] or brand_row["ブランド"]:
                 rows.append(brand_row)
+                save_acquired_brand(brand_row, brand_page_url)
 
             time.sleep(WAIT_BETWEEN_BRAND_PAGES)
 
@@ -657,6 +873,8 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
         "停止しました": stopped,
         "一覧取得ページ数": fetched_pages,
         "ブランド詳細取得ページ数": fetched_brand_pages,
+        "履歴スキップ件数": skipped_by_history_count,
+        "一覧内重複スキップ件数": duplicate_candidate_count,
         "CSV出力件数": len(rows),
         "CSV保存済み": csv_saved,
         "CSV保存先": csv_path,
@@ -673,7 +891,7 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
 class FashionPressCollectionsApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Fashion Press 東京コレクション取得ツール")
+        self.root.title("Fashion Press 東京・その他コレクション取得ツール")
         self.root.geometry("760x620")
         self.root.resizable(False, False)
 
@@ -686,7 +904,7 @@ class FashionPressCollectionsApp:
     def create_widgets(self):
         title_label = tk.Label(
             self.root,
-            text="Fashion Press 東京コレクション取得ツール",
+            text="Fashion Press 東京・その他コレクション取得ツール",
             font=("Meiryo", 16, "bold"),
         )
         title_label.pack(pady=14)
@@ -703,7 +921,7 @@ class FashionPressCollectionsApp:
         tk.Label(info_frame, text="場所:", font=("Meiryo", 10, "bold")).grid(
             row=1, column=0, sticky="w", pady=3
         )
-        tk.Label(info_frame, text="東京固定", font=("Meiryo", 10)).grid(
+        tk.Label(info_frame, text="東京・その他固定", font=("Meiryo", 10)).grid(
             row=1, column=1, sticky="w", pady=3
         )
 
@@ -743,7 +961,7 @@ class FashionPressCollectionsApp:
 
         tk.Label(
             option_frame,
-            text="取得範囲: 各シーズンの東京一覧1ページ目に表示されているブランドのみ",
+            text="取得範囲: 各シーズンの東京・その他一覧1ページ目に表示されているブランドのみ",
             font=("Meiryo", 10),
         ).pack(
             side="left"
@@ -840,9 +1058,9 @@ class FashionPressCollectionsApp:
         confirm = messagebox.askokcancel(
             "実行確認",
             "Fashion Pressのコレクション一覧からブランド概要を取得します。\n\n"
-            f"場所: 東京固定\n"
+            f"場所: 東京・その他固定\n"
             f"シーズン数: {len(config.seasons)}\n"
-            "取得範囲: 各シーズンの東京一覧1ページ目のみ\n"
+            "取得範囲: 各シーズンの東京・その他一覧1ページ目のみ\n"
             "次ページは取得しません。\n\n"
             "実行してよろしいですか？",
         )
@@ -891,6 +1109,7 @@ class FashionPressCollectionsApp:
             ("停止しました。\n\n" if stopped else "処理が完了しました。\n\n")
             + f"一覧取得ページ数: {result.get('一覧取得ページ数', 0)}\n"
             + f"ブランド詳細取得ページ数: {result.get('ブランド詳細取得ページ数', 0)}\n"
+            + f"履歴スキップ件数: {result.get('履歴スキップ件数', 0)}\n"
             + f"CSV出力件数: {result.get('CSV出力件数', 0)}\n"
             + f"CSV保存: {'あり' if result.get('CSV保存済み') else 'なし'}\n"
             + f"CSV保存先:\n{result.get('CSV保存先', '')}"

@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.log
+*.db
 
 # Generated CSV output
 output/
