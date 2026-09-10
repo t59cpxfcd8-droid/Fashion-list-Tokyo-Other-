@@ -73,12 +73,12 @@ Gmailを使う場合は、通常のログインパスワードではなく、Goo
 
 取得済みブランドは `fashion_press_history.db` に保存されます。
 
-手動で履歴を追加したい場合は、DBを直接編集せず `output/history_manual.csv` に追記してください。
+手動で履歴を追加したい場合は、DBを直接編集せず `output/manual_database.csv` に追記してください。
 
 初回起動時に以下のテンプレートCSVが自動作成されます。
 
 ```text
-output/history_manual.csv
+output/manual_database.csv
 ```
 
 手動追加で一番おすすめの列は `brand_page_url` です。
@@ -102,3 +102,11 @@ https://www.fashion-press.net/brands/3062,,,,
 ## 出力先
 
 CSVはスクリプトと同じ階層の `output/` フォルダに保存されます。
+
+出力CSVのファイル名には、選択シーズン・選択場所・取得件数・取得日時が入ります。
+
+例:
+
+```text
+fashion_press_2027ss_other_3items_20260910_153000.csv
+```

@@ -112,7 +112,8 @@ OUTPUT_COLUMNS = [
     "ブランド概要",
 ]
 
-MANUAL_HISTORY_CSV = OUTPUT_DIR / "history_manual.csv"
+MANUAL_DATABASE_CSV = OUTPUT_DIR / "manual_database.csv"
+LEGACY_MANUAL_HISTORY_CSV = OUTPUT_DIR / "history_manual.csv"
 MANUAL_HISTORY_COLUMNS = [
     "brand_page_url",
     "ブランド",
@@ -243,10 +244,10 @@ def canonical_url(value: str) -> str:
 
 
 def create_manual_history_template():
-    if MANUAL_HISTORY_CSV.exists():
+    if MANUAL_DATABASE_CSV.exists():
         return
 
-    with MANUAL_HISTORY_CSV.open("w", newline="", encoding="utf-8-sig") as f:
+    with MANUAL_DATABASE_CSV.open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=MANUAL_HISTORY_COLUMNS)
         writer.writeheader()
 
@@ -858,51 +859,83 @@ def get_row_value(row: dict, keys: list[str]) -> str:
     return ""
 
 
+def safe_filename_part(value: str) -> str:
+    value = clean_text(value)
+    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value)
+    value = re.sub(r"-+", "-", value)
+    return value.strip("-") or "none"
+
+
+def summarize_slug_selection(slugs: list[str], unit_name: str, max_exact: int = 6) -> str:
+    safe_slugs = [safe_filename_part(slug) for slug in slugs if slug]
+
+    if not safe_slugs:
+        return f"0{unit_name}"
+
+    if len(safe_slugs) <= max_exact:
+        return "_".join(safe_slugs)
+
+    return f"{safe_slugs[0]}_to_{safe_slugs[-1]}_{len(safe_slugs)}{unit_name}"
+
+
+def build_output_csv_path(config: "ScrapeConfig", row_count: int) -> Path:
+    season_part = summarize_slug_selection([slug for _label, slug in config.seasons], "seasons")
+    location_part = summarize_slug_selection([slug for _label, slug in config.locations], "locations")
+    count_part = f"{row_count}items"
+    filename = f"fashion_press_{season_part}_{location_part}_{count_part}_{timestamp_str()}.csv"
+    return OUTPUT_DIR / filename
+
+
 def import_manual_history_csv_to_db() -> int:
     init_db()
     create_manual_history_template()
 
-    if not MANUAL_HISTORY_CSV.exists():
-        return 0
-
     imported = 0
+    manual_csv_files = [
+        MANUAL_DATABASE_CSV,
+        LEGACY_MANUAL_HISTORY_CSV,
+    ]
 
-    try:
-        with MANUAL_HISTORY_CSV.open("r", newline="", encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
+    for manual_csv_file in manual_csv_files:
+        if not manual_csv_file.exists():
+            continue
 
-            for row in reader:
-                brand_page_url = canonical_url(
-                    get_row_value(row, ["brand_page_url", "ブランド詳細URL", "Fashion PressブランドURL"])
-                )
-                brand = canonical_text(get_row_value(row, ["ブランド", "brand"]))
-                brand_kana = canonical_text(get_row_value(row, ["ブランド（カタカナ）", "brand_kana"]))
-                official_url = canonical_url(get_row_value(row, ["ブランドURL", "official_url"]))
+        try:
+            with manual_csv_file.open("r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
 
-                if not any([brand_page_url, brand, brand_kana, official_url]):
-                    continue
+                for row in reader:
+                    brand_page_url = canonical_url(
+                        get_row_value(row, ["brand_page_url", "ブランド詳細URL", "Fashion PressブランドURL"])
+                    )
+                    brand = canonical_text(get_row_value(row, ["ブランド", "brand"]))
+                    brand_kana = canonical_text(get_row_value(row, ["ブランド（カタカナ）", "brand_kana"]))
+                    official_url = canonical_url(get_row_value(row, ["ブランドURL", "official_url"]))
 
-                if is_acquired_brand(
-                    brand_page_url=brand_page_url,
-                    brand=brand,
-                    brand_kana=brand_kana,
-                    official_url=official_url,
-                ):
-                    continue
+                    if not any([brand_page_url, brand, brand_kana, official_url]):
+                        continue
 
-                save_acquired_brand(
-                    {
-                        "ブランド": brand,
-                        "ブランド（カタカナ）": brand_kana,
-                        "ブランドURL": official_url,
-                        "ブランド概要": clean_text(row.get("ブランド概要", "")),
-                    },
-                    brand_page_url,
-                )
-                imported += 1
+                    if is_acquired_brand(
+                        brand_page_url=brand_page_url,
+                        brand=brand,
+                        brand_kana=brand_kana,
+                        official_url=official_url,
+                    ):
+                        continue
 
-    except Exception as e:
-        log(f"手動履歴CSVの取り込みをスキップしました: {MANUAL_HISTORY_CSV} / {e}")
+                    save_acquired_brand(
+                        {
+                            "ブランド": brand,
+                            "ブランド（カタカナ）": brand_kana,
+                            "ブランドURL": official_url,
+                            "ブランド概要": clean_text(row.get("ブランド概要", "")),
+                        },
+                        brand_page_url,
+                    )
+                    imported += 1
+
+        except Exception as e:
+            log(f"手動DB CSVの取り込みをスキップしました: {manual_csv_file} / {e}")
 
     return imported
 
@@ -927,7 +960,6 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
     imported_manual_history_count = import_manual_history_csv_to_db()
     rows = []
     brand_candidates = {}
-    output_csv = OUTPUT_DIR / f"fashion_press_tokyo_other_brand_overviews_{timestamp_str()}.csv"
     stopped = False
     fetched_pages = 0
     fetched_brand_pages = 0
@@ -1021,6 +1053,7 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
             time.sleep(WAIT_BETWEEN_BRAND_PAGES)
 
     if rows or config.save_empty_csv:
+        output_csv = build_output_csv_path(config, len(rows))
         save_csv(rows, output_csv)
         csv_saved = True
         csv_path = str(output_csv.resolve())
