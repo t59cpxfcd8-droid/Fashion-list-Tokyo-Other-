@@ -974,8 +974,9 @@ class FashionPressCollectionsApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Fashion Press 東京・その他コレクション取得ツール")
-        self.root.geometry("760x620")
-        self.root.resizable(False, False)
+        self.root.geometry("820x700")
+        self.root.minsize(760, 640)
+        self.root.resizable(True, True)
 
         self.seasons = DEFAULT_SEASONS[:]
         self.location_vars = {}
@@ -988,12 +989,12 @@ class FashionPressCollectionsApp:
         title_label = tk.Label(
             self.root,
             text="Fashion Press 東京・その他コレクション取得ツール",
-            font=("Meiryo", 16, "bold"),
+            font=("Meiryo", 15, "bold"),
         )
-        title_label.pack(pady=14)
+        title_label.pack(pady=(12, 8))
 
         info_frame = tk.Frame(self.root)
-        info_frame.pack(fill="x", padx=24)
+        info_frame.pack(fill="x", padx=24, pady=(0, 4))
 
         tk.Label(info_frame, text="対象URL:", font=("Meiryo", 10, "bold")).grid(
             row=0, column=0, sticky="w", pady=3
@@ -1026,7 +1027,7 @@ class FashionPressCollectionsApp:
         )
 
         season_frame = tk.LabelFrame(self.root, text="シーズン選択", font=("Meiryo", 10, "bold"))
-        season_frame.pack(fill="both", expand=True, padx=24, pady=12)
+        season_frame.pack(fill="both", expand=True, padx=24, pady=(8, 8))
 
         list_frame = tk.Frame(season_frame)
         list_frame.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1034,7 +1035,7 @@ class FashionPressCollectionsApp:
         self.season_listbox = tk.Listbox(
             list_frame,
             selectmode="extended",
-            height=16,
+            height=13,
             font=("Meiryo", 10),
             exportselection=False,
         )
@@ -1044,7 +1045,7 @@ class FashionPressCollectionsApp:
         scrollbar.pack(side="right", fill="y")
 
         button_frame = tk.Frame(season_frame)
-        button_frame.pack(fill="x", padx=10, pady=(0, 10))
+        button_frame.pack(fill="x", padx=10, pady=(0, 8))
 
         tk.Button(button_frame, text="全選択", width=12, command=self.select_all_seasons).pack(
             side="left", padx=4
@@ -1057,33 +1058,32 @@ class FashionPressCollectionsApp:
         )
 
         option_frame = tk.Frame(self.root)
-        option_frame.pack(fill="x", padx=24, pady=4)
+        option_frame.pack(fill="x", padx=24, pady=(0, 6))
 
         tk.Label(
             option_frame,
             text="取得範囲: 各シーズンの選択場所一覧1ページ目に表示されているブランドのみ",
             font=("Meiryo", 10),
-        ).pack(
-            side="left"
-        )
+            anchor="w",
+        ).pack(fill="x")
 
         self.save_empty_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(option_frame, text="0件でもCSVを保存", variable=self.save_empty_var).pack(
-            side="left", padx=20
+            anchor="w", pady=(4, 0)
         )
 
         self.status_label = tk.Label(self.root, text="待機中", font=("Meiryo", 10), fg="gray")
-        self.status_label.pack(pady=8)
+        self.status_label.pack(pady=(4, 6))
 
         action_frame = tk.Frame(self.root)
-        action_frame.pack(pady=10)
+        action_frame.pack(pady=(2, 14))
 
         self.run_button = tk.Button(
             action_frame,
             text="実行",
             font=("Meiryo", 13, "bold"),
-            width=18,
-            height=2,
+            width=14,
+            height=1,
             command=self.start_scraping,
         )
         self.run_button.pack(side="left", padx=8)
@@ -1092,8 +1092,8 @@ class FashionPressCollectionsApp:
             action_frame,
             text="停止",
             font=("Meiryo", 12, "bold"),
-            width=14,
-            height=2,
+            width=12,
+            height=1,
             state="disabled",
             command=self.stop_scraping,
         )
