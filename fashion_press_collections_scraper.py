@@ -6,8 +6,8 @@ Fashion Press コレクション一覧スクレイピングツール
 
 仕様:
     - GUIでシーズンを複数選択
-    - 場所は東京・その他で固定
-    - 各シーズンの東京・その他コレクション一覧1ページ目に表示されているブランドだけ取得
+    - GUIで場所を選択
+    - 各シーズンの選択場所コレクション一覧1ページ目に表示されているブランドだけ取得
     - ブランド詳細ページから公式サイトURLとブランド概要を取得
     - CSVに保存
     - 次ページ巡回はしない
@@ -762,6 +762,7 @@ def save_csv(rows: list[dict], output_csv: Path):
 @dataclass
 class ScrapeConfig:
     seasons: list[tuple[str, str]]
+    locations: list[tuple[str, str]]
     save_empty_csv: bool
 
 
@@ -778,15 +779,16 @@ def run_scraping(config: ScrapeConfig, stop_event=None) -> dict:
     duplicate_candidate_count = 0
 
     log("========================================")
-    log("Fashion Press 東京・その他コレクション ブランド概要取得開始")
+    location_names = "・".join(label for label, _slug in config.locations)
+    log("Fashion Press コレクション ブランド概要取得開始")
     log(f"選択シーズン数: {len(config.seasons)}")
-    log("取得範囲: 各シーズンの東京・その他一覧1ページ目に表示されているブランドのみ")
-    log("場所: 東京・その他固定")
+    log(f"選択場所: {location_names}")
+    log("取得範囲: 各シーズンの選択場所一覧1ページ目に表示されているブランドのみ")
     log(f"過去CSVから履歴DBへ取り込んだ件数: {imported_history_count}")
     log("========================================")
 
     for season_label, season_slug in config.seasons:
-        for location_label, location_slug in LOCATION_OPTIONS:
+        for location_label, location_slug in config.locations:
             if stop_event is not None and stop_event.is_set():
                 stopped = True
                 log("停止要求を受け付けたため処理を終了します。")
@@ -896,6 +898,7 @@ class FashionPressCollectionsApp:
         self.root.resizable(False, False)
 
         self.seasons = DEFAULT_SEASONS[:]
+        self.location_vars = {}
         self.is_running = False
         self.stop_event = None
 
@@ -921,8 +924,25 @@ class FashionPressCollectionsApp:
         tk.Label(info_frame, text="場所:", font=("Meiryo", 10, "bold")).grid(
             row=1, column=0, sticky="w", pady=3
         )
-        tk.Label(info_frame, text="東京・その他固定", font=("Meiryo", 10)).grid(
-            row=1, column=1, sticky="w", pady=3
+        location_select_frame = tk.Frame(info_frame)
+        location_select_frame.grid(row=1, column=1, sticky="w", pady=3)
+
+        for location_label, location_slug in LOCATION_OPTIONS:
+            var = tk.BooleanVar(value=True)
+            self.location_vars[location_slug] = var
+            ttk.Checkbutton(
+                location_select_frame,
+                text=location_label,
+                variable=var,
+            ).pack(side="left", padx=(0, 12))
+
+        tk.Label(
+            info_frame,
+            text="未選択の場合は実行できません",
+            font=("Meiryo", 9),
+            fg="gray",
+        ).grid(
+            row=2, column=1, sticky="w", pady=3
         )
 
         season_frame = tk.LabelFrame(self.root, text="シーズン選択", font=("Meiryo", 10, "bold"))
@@ -961,7 +981,7 @@ class FashionPressCollectionsApp:
 
         tk.Label(
             option_frame,
-            text="取得範囲: 各シーズンの東京・その他一覧1ページ目に表示されているブランドのみ",
+            text="取得範囲: 各シーズンの選択場所一覧1ページ目に表示されているブランドのみ",
             font=("Meiryo", 10),
         ).pack(
             side="left"
@@ -1039,9 +1059,19 @@ class FashionPressCollectionsApp:
             return None
 
         selected_seasons = [self.seasons[i] for i in selected_indexes]
+        selected_locations = [
+            (label, slug)
+            for label, slug in LOCATION_OPTIONS
+            if self.location_vars.get(slug) and self.location_vars[slug].get()
+        ]
+
+        if not selected_locations:
+            messagebox.showerror("入力エラー", "取得する場所を1つ以上選択してください。")
+            return None
 
         return ScrapeConfig(
             seasons=selected_seasons,
+            locations=selected_locations,
             save_empty_csv=self.save_empty_var.get(),
         )
 
@@ -1058,9 +1088,9 @@ class FashionPressCollectionsApp:
         confirm = messagebox.askokcancel(
             "実行確認",
             "Fashion Pressのコレクション一覧からブランド概要を取得します。\n\n"
-            f"場所: 東京・その他固定\n"
+            f"場所: {'・'.join(label for label, _slug in config.locations)}\n"
             f"シーズン数: {len(config.seasons)}\n"
-            "取得範囲: 各シーズンの東京・その他一覧1ページ目のみ\n"
+            "取得範囲: 各シーズンの選択場所一覧1ページ目のみ\n"
             "次ページは取得しません。\n\n"
             "実行してよろしいですか？",
         )
