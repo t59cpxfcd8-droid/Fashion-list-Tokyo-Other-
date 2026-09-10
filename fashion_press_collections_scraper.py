@@ -1130,7 +1130,7 @@ class FashionPressCollectionsApp:
         tk.Button(button_frame, text="選択解除", width=12, command=self.clear_seasons).pack(
             side="left", padx=4
         )
-        tk.Button(button_frame, text="シーズン再取得", width=16, command=self.refresh_seasons).pack(
+        tk.Button(button_frame, text="最新シーズンを読み込む", width=20, command=self.refresh_seasons).pack(
             side="left", padx=4
         )
 
@@ -1236,20 +1236,20 @@ class FashionPressCollectionsApp:
 
     def refresh_seasons(self):
         if self.is_running:
-            messagebox.showwarning("実行中", "取得中はシーズン再取得できません。")
+            messagebox.showwarning("実行中", "取得中は最新シーズンを読み込めません。")
             return
 
-        self.status_label.config(text="シーズン一覧を取得中です。", fg="blue")
+        self.status_label.config(text="最新シーズンを読み込んでいます。", fg="blue")
         self.root.update_idletasks()
 
         try:
             self.seasons = fetch_seasons_from_site()
             self.populate_seasons()
             self.select_all_seasons()
-            self.status_label.config(text="シーズン一覧を更新しました。", fg="green")
+            self.status_label.config(text="最新シーズンを読み込みました。", fg="green")
         except Exception as e:
-            self.status_label.config(text="シーズン再取得に失敗しました。既定リストを使用します。", fg="orange")
-            messagebox.showwarning("シーズン再取得失敗", str(e))
+            self.status_label.config(text="最新シーズンの読み込みに失敗しました。既定リストを使用します。", fg="orange")
+            messagebox.showwarning("最新シーズンの読み込み失敗", str(e))
 
     def build_config_from_form(self) -> ScrapeConfig | None:
         selected_indexes = self.season_listbox.curselection()
