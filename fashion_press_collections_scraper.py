@@ -1220,7 +1220,6 @@ class FashionPressCollectionsApp:
         self.stop_button.pack(side="left", padx=8)
 
         self.populate_seasons()
-        self.select_all_seasons()
 
     def populate_seasons(self):
         self.season_listbox.delete(0, tk.END)
@@ -1245,7 +1244,6 @@ class FashionPressCollectionsApp:
         try:
             self.seasons = fetch_seasons_from_site()
             self.populate_seasons()
-            self.select_all_seasons()
             self.status_label.config(text="最新シーズンを読み込みました。", fg="green")
         except Exception as e:
             self.status_label.config(text="最新シーズンの読み込みに失敗しました。既定リストを使用します。", fg="orange")
