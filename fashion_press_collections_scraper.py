@@ -1289,12 +1289,12 @@ class FashionPressCollectionsApp:
     def validate_email_settings(self) -> bool:
         settings = self.get_email_settings_from_form()
 
-        if not settings["enabled"]:
+        if not settings["enabled"] or not settings["to_email"]:
+            settings["enabled"] = False
             save_email_settings(settings)
             return True
 
         required_fields = [
-            ("宛先", settings["to_email"]),
             ("送信元", settings["from_email"]),
             ("SMTP", settings["smtp_host"]),
             ("Port", settings["smtp_port"]),
@@ -1390,7 +1390,7 @@ class FashionPressCollectionsApp:
 
         email_settings = self.get_email_settings_from_form()
 
-        if email_settings.get("enabled"):
+        if email_settings.get("enabled") and email_settings.get("to_email"):
             try:
                 send_completion_email(email_settings, self.email_password_var.get(), result)
                 message += "\n\n完了メール: 送信しました"
