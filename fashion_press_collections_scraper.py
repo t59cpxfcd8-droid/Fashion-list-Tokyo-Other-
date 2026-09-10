@@ -1086,7 +1086,7 @@ class FashionPressCollectionsApp:
         location_select_frame.grid(row=1, column=1, sticky="w", pady=3)
 
         for location_label, location_slug in LOCATION_OPTIONS:
-            var = tk.BooleanVar(value=True)
+            var = tk.BooleanVar(value=False)
             self.location_vars[location_slug] = var
             ttk.Checkbutton(
                 location_select_frame,
