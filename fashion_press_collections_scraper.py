@@ -18,10 +18,8 @@ Fashion Press コレクション一覧スクレイピングツール
 """
 
 import csv
-import json
 import logging
 import re
-import smtplib
 import sqlite3
 import ssl
 import tempfile
@@ -29,7 +27,6 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from email.message import EmailMessage
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -52,7 +49,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = SCRIPT_DIR / "output"
 LOG_FILE = SCRIPT_DIR / "fashion_press_collections.log"
 DB_PATH = SCRIPT_DIR / "fashion_press_history.db"
-EMAIL_SETTINGS_PATH = SCRIPT_DIR / "email_settings.json"
 
 try:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -122,17 +118,6 @@ MANUAL_HISTORY_COLUMNS = [
     "ブランド概要",
 ]
 
-DEFAULT_EMAIL_SETTINGS = {
-    "enabled": False,
-    "to_email": "",
-    "from_email": "",
-    "smtp_host": "smtp.gmail.com",
-    "smtp_port": "587",
-    "smtp_user": "",
-    "use_tls": True,
-}
-
-
 logging.basicConfig(
     filename=str(LOG_FILE),
     level=logging.INFO,
@@ -145,68 +130,6 @@ def log(message: str, console: bool = True):
     if console:
         print(message)
     logging.info(message)
-
-
-def load_email_settings() -> dict:
-    settings = DEFAULT_EMAIL_SETTINGS.copy()
-
-    if not EMAIL_SETTINGS_PATH.exists():
-        return settings
-
-    try:
-        with EMAIL_SETTINGS_PATH.open("r", encoding="utf-8") as f:
-            loaded = json.load(f)
-
-        if isinstance(loaded, dict):
-            settings.update({key: loaded.get(key, value) for key, value in settings.items()})
-
-    except Exception as e:
-        log(f"メール設定の読み込みをスキップしました: {e}")
-
-    return settings
-
-
-def save_email_settings(settings: dict):
-    safe_settings = {
-        key: settings.get(key, DEFAULT_EMAIL_SETTINGS[key])
-        for key in DEFAULT_EMAIL_SETTINGS
-    }
-
-    with EMAIL_SETTINGS_PATH.open("w", encoding="utf-8") as f:
-        json.dump(safe_settings, f, ensure_ascii=False, indent=2)
-
-
-def build_completion_email_body(result: dict) -> str:
-    lines = [
-        "Fashion Press ブランド概要取得が完了しました。",
-        "",
-        f"停止しました: {'はい' if result.get('停止しました') else 'いいえ'}",
-        f"一覧取得ページ数: {result.get('一覧取得ページ数', 0)}",
-        f"ブランド詳細取得ページ数: {result.get('ブランド詳細取得ページ数', 0)}",
-        f"手動履歴CSV取り込み件数: {result.get('手動履歴CSV取り込み件数', 0)}",
-        f"履歴スキップ件数: {result.get('履歴スキップ件数', 0)}",
-        f"CSV出力件数: {result.get('CSV出力件数', 0)}",
-        f"CSV保存: {'あり' if result.get('CSV保存済み') else 'なし'}",
-        f"CSV保存先: {result.get('CSV保存先', '')}",
-    ]
-    return "\n".join(lines)
-
-
-def send_completion_email(settings: dict, password: str, result: dict):
-    message = EmailMessage()
-    message["Subject"] = "Fashion Press ブランド概要取得 完了通知"
-    message["From"] = settings["from_email"]
-    message["To"] = settings["to_email"]
-    message.set_content(build_completion_email_body(result))
-
-    smtp_port = int(settings["smtp_port"])
-
-    with smtplib.SMTP(settings["smtp_host"], smtp_port, timeout=30) as smtp:
-        if settings.get("use_tls", True):
-            smtp.starttls()
-
-        smtp.login(settings["smtp_user"], password)
-        smtp.send_message(message)
 
 
 def clean_text(text) -> str:
@@ -1085,17 +1008,22 @@ class FashionPressCollectionsApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Fashion Press 東京・その他コレクション取得ツール")
-        self.root.geometry("880x820")
-        self.root.minsize(820, 760)
-        self.root.resizable(True, True)
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(2, weight=1)
 
         self.seasons = DEFAULT_SEASONS[:]
         self.location_vars = {}
-        self.email_password_var = tk.StringVar(value="")
         self.is_running = False
         self.stop_event = None
 
         self.create_widgets()
+        self.root.update_idletasks()
+        min_width = self.root.winfo_reqwidth()
+        min_height = self.root.winfo_reqheight()
+        self.root.minsize(min_width, min_height)
+        width = max(min_width, min(640, self.root.winfo_screenwidth() - 48))
+        height = max(min_height, min(480, self.root.winfo_screenheight() - 100))
+        self.root.geometry(f"{width}x{height}")
 
     def create_widgets(self):
         title_label = tk.Label(
@@ -1103,10 +1031,10 @@ class FashionPressCollectionsApp:
             text="Fashion Press 東京・その他コレクション取得ツール",
             font=("Meiryo", 15, "bold"),
         )
-        title_label.pack(pady=(12, 8))
+        title_label.grid(row=0, column=0, sticky="w", padx=16, pady=(12, 8))
 
         info_frame = tk.Frame(self.root)
-        info_frame.pack(fill="x", padx=24, pady=(0, 4))
+        info_frame.grid(row=1, column=0, sticky="ew", padx=16)
 
         tk.Label(info_frame, text="対象URL:", font=("Meiryo", 10, "bold")).grid(
             row=0, column=0, sticky="w", pady=3
@@ -1129,25 +1057,18 @@ class FashionPressCollectionsApp:
                 variable=var,
             ).pack(side="left", padx=(0, 12))
 
-        tk.Label(
-            info_frame,
-            text="未選択の場合は実行できません",
-            font=("Meiryo", 9),
-            fg="gray",
-        ).grid(
-            row=2, column=1, sticky="w", pady=3
-        )
-
         season_frame = tk.LabelFrame(self.root, text="シーズン選択", font=("Meiryo", 10, "bold"))
-        season_frame.pack(fill="both", expand=True, padx=24, pady=(8, 8))
+        season_frame.grid(row=2, column=0, sticky="nsew", padx=16, pady=8)
+        season_frame.columnconfigure(0, weight=1)
+        season_frame.rowconfigure(0, weight=1)
 
         list_frame = tk.Frame(season_frame)
-        list_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        list_frame.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
         self.season_listbox = tk.Listbox(
             list_frame,
             selectmode="extended",
-            height=10,
+            height=2,
             font=("Meiryo", 10),
             exportselection=False,
         )
@@ -1157,87 +1078,34 @@ class FashionPressCollectionsApp:
         scrollbar.pack(side="right", fill="y")
 
         button_frame = tk.Frame(season_frame)
-        button_frame.pack(fill="x", padx=10, pady=(0, 8))
+        button_frame.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
 
-        tk.Button(button_frame, text="全選択", width=12, command=self.select_all_seasons).pack(
-            side="left", padx=4
+        ttk.Button(button_frame, text="全選択", command=self.select_all_seasons).pack(
+            side="left", padx=(0, 6)
         )
-        tk.Button(button_frame, text="選択解除", width=12, command=self.clear_seasons).pack(
-            side="left", padx=4
+        ttk.Button(button_frame, text="選択解除", command=self.clear_seasons).pack(
+            side="left", padx=(0, 6)
         )
-        tk.Button(button_frame, text="最新シーズンを読み込む", width=20, command=self.refresh_seasons).pack(
-            side="left", padx=4
+        ttk.Button(button_frame, text="最新シーズンを読み込む", command=self.refresh_seasons).pack(
+            side="left"
         )
-
-        option_frame = tk.Frame(self.root)
-        option_frame.pack(fill="x", padx=24, pady=(0, 6))
-
-        tk.Label(
-            option_frame,
-            text="取得範囲: 各シーズンの選択場所一覧1ページ目に表示されているブランドのみ",
-            font=("Meiryo", 10),
-            anchor="w",
-        ).pack(fill="x")
 
         self.save_empty_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(option_frame, text="0件でもCSVを保存", variable=self.save_empty_var).pack(
-            anchor="w", pady=(4, 0)
+        ttk.Checkbutton(self.root, text="0件でもCSVを保存", variable=self.save_empty_var).grid(
+            row=3, column=0, sticky="w", padx=16
         )
-
-        email_frame = tk.LabelFrame(self.root, text="完了メール", font=("Meiryo", 10, "bold"))
-        email_frame.pack(fill="x", padx=24, pady=(4, 8))
-
-        email_settings = load_email_settings()
-        self.email_enabled_var = tk.BooleanVar(value=bool(email_settings.get("enabled")))
-        self.email_to_var = tk.StringVar(value=str(email_settings.get("to_email", "")))
-        self.email_from_var = tk.StringVar(value=str(email_settings.get("from_email", "")))
-        self.smtp_host_var = tk.StringVar(value=str(email_settings.get("smtp_host", "smtp.gmail.com")))
-        self.smtp_port_var = tk.StringVar(value=str(email_settings.get("smtp_port", "587")))
-        self.smtp_user_var = tk.StringVar(value=str(email_settings.get("smtp_user", "")))
-        self.smtp_tls_var = tk.BooleanVar(value=bool(email_settings.get("use_tls", True)))
-
-        ttk.Checkbutton(
-            email_frame,
-            text="完了時にメールを送信",
-            variable=self.email_enabled_var,
-        ).grid(row=0, column=0, columnspan=4, sticky="w", padx=10, pady=(8, 4))
-
-        tk.Label(email_frame, text="宛先:", font=("Meiryo", 9)).grid(row=1, column=0, sticky="e", padx=6, pady=3)
-        tk.Entry(email_frame, textvariable=self.email_to_var, width=34, font=("Meiryo", 9)).grid(row=1, column=1, sticky="w", padx=6, pady=3)
-        tk.Label(email_frame, text="送信元:", font=("Meiryo", 9)).grid(row=1, column=2, sticky="e", padx=6, pady=3)
-        tk.Entry(email_frame, textvariable=self.email_from_var, width=34, font=("Meiryo", 9)).grid(row=1, column=3, sticky="w", padx=6, pady=3)
-
-        tk.Label(email_frame, text="SMTP:", font=("Meiryo", 9)).grid(row=2, column=0, sticky="e", padx=6, pady=3)
-        tk.Entry(email_frame, textvariable=self.smtp_host_var, width=34, font=("Meiryo", 9)).grid(row=2, column=1, sticky="w", padx=6, pady=3)
-        tk.Label(email_frame, text="Port:", font=("Meiryo", 9)).grid(row=2, column=2, sticky="e", padx=6, pady=3)
-        tk.Entry(email_frame, textvariable=self.smtp_port_var, width=10, font=("Meiryo", 9)).grid(row=2, column=3, sticky="w", padx=6, pady=3)
-
-        tk.Label(email_frame, text="SMTPユーザー:", font=("Meiryo", 9)).grid(row=3, column=0, sticky="e", padx=6, pady=3)
-        tk.Entry(email_frame, textvariable=self.smtp_user_var, width=34, font=("Meiryo", 9)).grid(row=3, column=1, sticky="w", padx=6, pady=3)
-        tk.Label(email_frame, text="パスワード:", font=("Meiryo", 9)).grid(row=3, column=2, sticky="e", padx=6, pady=3)
-        tk.Entry(email_frame, textvariable=self.email_password_var, width=24, font=("Meiryo", 9), show="*").grid(row=3, column=3, sticky="w", padx=6, pady=3)
-
-        ttk.Checkbutton(email_frame, text="TLSを使用", variable=self.smtp_tls_var).grid(
-            row=4, column=1, sticky="w", padx=6, pady=(2, 8)
-        )
-        tk.Label(
-            email_frame,
-            text="宛先・SMTP設定は保存します。パスワードは保存しません。",
-            font=("Meiryo", 8),
-            fg="gray",
-        ).grid(row=4, column=2, columnspan=2, sticky="w", padx=6, pady=(2, 8))
 
         self.status_label = tk.Label(self.root, text="待機中", font=("Meiryo", 10), fg="gray")
-        self.status_label.pack(pady=(4, 6))
+        self.status_label.grid(row=4, column=0, sticky="ew", padx=16, pady=(4, 6))
 
         action_frame = tk.Frame(self.root)
-        action_frame.pack(pady=(2, 14))
+        action_frame.grid(row=5, column=0, pady=(0, 12))
 
         self.run_button = tk.Button(
             action_frame,
             text="実行",
             font=("Meiryo", 13, "bold"),
-            width=14,
+            width=12,
             height=1,
             command=self.start_scraping,
         )
@@ -1246,7 +1114,7 @@ class FashionPressCollectionsApp:
         self.stop_button = tk.Button(
             action_frame,
             text="停止",
-            font=("Meiryo", 12, "bold"),
+            font=("Meiryo", 13, "bold"),
             width=12,
             height=1,
             state="disabled",
@@ -1308,45 +1176,6 @@ class FashionPressCollectionsApp:
             save_empty_csv=self.save_empty_var.get(),
         )
 
-    def get_email_settings_from_form(self) -> dict:
-        return {
-            "enabled": self.email_enabled_var.get(),
-            "to_email": self.email_to_var.get().strip(),
-            "from_email": self.email_from_var.get().strip(),
-            "smtp_host": self.smtp_host_var.get().strip(),
-            "smtp_port": self.smtp_port_var.get().strip(),
-            "smtp_user": self.smtp_user_var.get().strip(),
-            "use_tls": self.smtp_tls_var.get(),
-        }
-
-    def validate_email_settings(self) -> bool:
-        settings = self.get_email_settings_from_form()
-
-        if not settings["enabled"] or not settings["to_email"]:
-            settings["enabled"] = False
-            save_email_settings(settings)
-            return True
-
-        required_fields = [
-            ("送信元", settings["from_email"]),
-            ("SMTP", settings["smtp_host"]),
-            ("Port", settings["smtp_port"]),
-            ("SMTPユーザー", settings["smtp_user"]),
-            ("パスワード", self.email_password_var.get()),
-        ]
-        missing = [label for label, value in required_fields if not str(value).strip()]
-
-        if missing:
-            messagebox.showerror("メール設定エラー", "完了メールを送る場合は以下を入力してください。\n\n" + "\n".join(missing))
-            return False
-
-        if not settings["smtp_port"].isdigit():
-            messagebox.showerror("メール設定エラー", "Portは半角数字で入力してください。")
-            return False
-
-        save_email_settings(settings)
-        return True
-
     def start_scraping(self):
         if self.is_running:
             messagebox.showwarning("実行中", "現在処理中です。完了までお待ちください。")
@@ -1355,9 +1184,6 @@ class FashionPressCollectionsApp:
         config = self.build_config_from_form()
 
         if config is None:
-            return
-
-        if not self.validate_email_settings():
             return
 
         confirm = messagebox.askokcancel(
@@ -1388,7 +1214,7 @@ class FashionPressCollectionsApp:
 
         self.stop_event.set()
         self.stop_button.config(state="disabled")
-        self.status_label.config(text="停止要求を受け付けました。現在のページが終わるまでお待ちください。", fg="orange")
+        self.status_label.config(text="現在のページの取得後に停止します。", fg="orange")
 
     def scraping_worker(self, config: ScrapeConfig):
         try:
@@ -1420,16 +1246,6 @@ class FashionPressCollectionsApp:
             + f"CSV保存: {'あり' if result.get('CSV保存済み') else 'なし'}\n"
             + f"CSV保存先:\n{result.get('CSV保存先', '')}"
         )
-
-        email_settings = self.get_email_settings_from_form()
-
-        if email_settings.get("enabled") and email_settings.get("to_email"):
-            try:
-                send_completion_email(email_settings, self.email_password_var.get(), result)
-                message += "\n\n完了メール: 送信しました"
-            except Exception as e:
-                log(f"完了メール送信に失敗しました: {e}")
-                message += f"\n\n完了メール: 送信失敗\n{e}"
 
         messagebox.showinfo("取得完了" if not stopped else "停止完了", message)
 
