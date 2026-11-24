@@ -17,6 +17,18 @@ Fashion Press のコレクション一覧から、選択した場所に表示さ
 
 ## 実行方法
 
+### Windows
+
+1. [Python公式サイト](https://www.python.org/downloads/windows/)から、Tcl/Tk（`tkinter`）を含む Python 3.10 以降をインストールします。すでに入っていればそのまま使えます。
+2. GitHubの `Code` → `Download ZIP` で取得し、ZIPをすべて展開します。展開したフォルダはドキュメントなど、書き込み可能な場所に置いてください。
+3. 展開先の `FashionPressScraper.bat` をダブルクリックするとGUIが開きます。
+
+デスクトップから起動したい場合は、`.bat` のショートカットを作ってデスクトップへ置きます。`.bat` と `.py` は同じフォルダに置いてください。
+
+Macで使った履歴を引き継ぐ場合は、ツールを終了した状態で `fashion_press_history.db` と `output/` フォルダをWindows側の展開先にコピーします。
+
+### Mac
+
 Macでは `FashionPressScraper.command` をダブルクリックすると起動できます。
 
 初回起動時に「Macに損害を与えたり、プライバシーを侵害する可能性のあるマルウェアが含まれていないことを検証できませんでした」と表示される場合があります。
@@ -35,10 +47,8 @@ python3 fashion_press_collections_scraper.py
 
 ## お客様PCに必要なもの
 
-- Python 3: 必要
+- Python 3.10 以降（Tcl/Tk 付き）: 必要
 - VS Code: 実行だけなら不要。コードを編集する場合のみあると便利
-
-Macの場合、Windowsの `.bat` の代わりに `.command` ファイルを使います。
 
 ## 完了通知
 
